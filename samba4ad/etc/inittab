@@ -1,0 +1,23 @@
+# Order of actions during startup:
+#   1. all "sysinit" actions
+#   2. all "wait"    actions
+#   3. all "once"    actions
+#   4. all "askfirst" and "respawn"    actions
+#
+# Order of actions on halt/reboot/poweroff or SIGQUIT:
+#   1. all "shutdown" actions
+#
+# Order of actions on or SIGINT:
+#   1. all "ctrlaltdel" actions
+
+
+::sysinit:/etc/init.d/rcS start
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/rcS stop
+::restart:/sbin/init
+
+
+# ::askfirst:/bin/sh
+# tty2::askfirst:/bin/sh
+# tty3::askfirst:/bin/sh
+# tty4::askfirst:/bin/sh

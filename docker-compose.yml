@@ -1,0 +1,76 @@
+version: "3.4"
+services:
+  samba4ad:
+    # cap_add: To solve the crash during domain provisioning:
+    #    set_nt_acl_no_snum: fset_nt_acl returned NT_STATUS_ACCESS_DENIED
+    # see also: https://github.com/LasLabs/docker-alpine-samba-dc/issues/7
+    cap_add:
+      - SYS_ADMIN
+    container_name: samba4ad
+    build: 
+      context: ./samba4ad
+      dockerfile: Dockerfile
+    image: "samba4ad:v0.3"
+    hostname: ${S4AD_FQDN}
+    domainname: ${S4AD_REALM}
+    env_file:
+      - .env
+    entrypoint:  [ "/sbin/init" ]
+    secrets:
+      - source: domain_provision.secret
+        target: domain_provision.secret
+        uid: "0"
+        gid: "0"
+        mode: 0400
+    deploy:
+      restart_policy:
+        condition: any
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "/etc/init.d/rcS", "status"]
+#     interval: 1m30s
+      interval: 20s
+      timeout: 15s
+      retries: 3
+      start_period: 10s
+#     start_period: 40s
+    expose:
+      - 53
+      - 88
+      - 137
+      - 138
+      - 389
+      - 445
+      - 464
+      - 636
+    networks:
+      samba:
+        ipv4_address: ${S4AD_IPV4}
+        ipv6_address: ${S4AD_IPV6}
+    volumes:
+      - "samba4ad_data:/var/lib/samba"
+      - "samba4ad_etc:/etc/samba"
+
+
+networks:
+  samba:
+    ipam:
+      driver: default
+      config:
+        - subnet: ${S4AD_IPV4_CIDR}
+        - subnet: ${S4AD_IPV6_CIDR}
+
+
+volumes:
+  samba4ad_etc:
+  samba4ad_data:
+
+secrets:
+  # The passwords required for the domain provisioning should go in file
+  # `./domain_provision.secret`, e.g.:
+  #
+  #     S4AD_ADMINPW=password
+  #     S4AD_MACHINEPW=password
+  #     S4AD_KRBTGTPW=password
+  domain_provision.secret:
+    file: ./domain_provision.secret

@@ -1,0 +1,87 @@
+#!/bin/sh
+
+
+DONEFILE=/var/lib/samba/domain_provision.done
+SAMBAPID=/run/samba/samba.pid
+S4AD_FQDN=${S4AD_FQDN:-example.com}
+S4AD_SAMBA_DEBUG_LEVEL=${S4AD_SAMBA_DEBUG_LEVEL:-1}
+
+# Source the domain provision secrets
+. /run/secrets/domain_provision.secret
+
+LOG=/proc/1/fd/2
+
+log(){
+	echo "$@" > $LOG
+}
+
+resolv_conf(){
+	log "*** Re-create /etc/resolv.conf"
+	cat <<-EOF > /etc/resolv.conf
+	nameserver ${S4AD_IPV4}
+	search ${S4AD_REALM}
+	EOF
+	log "*** DEBUG: content of /etc/resolv.conf"
+	cat /etc/resolv.conf > $LOG
+}
+
+domain_provision(){
+	[ -f $DONEFILE ] \
+		&& { log "Marker $DONEFILE exists; Samba domain provision is DONE"; return 1; }
+
+	# clean up existing config
+	for f in /etc/samba/smb.conf /etc/krb5.conf 
+	do
+		[ -f $f ] && mv $f $f.bak
+	done
+
+	samba-tool domain provision \
+				 --server-role=dc  --use-rfc2307  \
+				 --machinepass=$S4AD_MACHINEPW \
+				 --adminpass=$S4AD_ADMINPW  \
+				 --krbtgtpass=$S4AD_KRBTGTPW  \
+				 --realm $S4AD_REALM \
+				 --domain $S4AD_WORKGROUP
+
+	[ -f /var/lib/samba/private/krb5.conf ] \
+		&& cp /var/lib/samba/private/krb5.conf /etc \
+		&& touch $DONEFILE	
+	resolv_conf
+}
+
+stop_samba(){
+	PID=$( cat $SAMBAPID )
+	log "*** Stopping samba root process (PID $PID)"
+	kill -15 $PID
+}
+
+
+trap stop_samba 1 2 3 4 5  6 7 8 9 10 15 
+
+case $1 in
+stop)
+	stop_samba
+	;;
+status)
+	samba-tool domain info ${S4AD_IPV4} \
+		&& log "Checking Samba: OK" \
+		|| { log "Checking Samba: ERROR"; return 1; }
+	host -t srv _ldap._tcp.${S4AD_REALM} ${S4AD_IPV4} \
+		&& log "Checking DNS: OK" \
+		|| { log  "Checking DNS: ERROR"; return 1; }
+	smbclient -N -L ${S4AD_IPV4} \
+		&& log "Checking RPC: OK" \
+		|| { log  "Checking RPC: ERROR"; return 1; }
+	;;
+*)
+	log "Starting Samba as AD DC..."
+	log "*** DEBUG: env vars"
+	[ ${S4AD_SAMBA_DEBUG_LEVEL} -ge 2 ] && ( env | grep S4AD | grep -v PW > $LOG )
+	domain_provision
+	resolv_conf
+	log "*** Starting samba ... (My PID: $$)"
+	# /usr/sbin/samba --foreground --no-process-group \
+	/usr/sbin/samba --no-process-group \
+		 --debug-stderr --debuglevel=${S4AD_SAMBA_DEBUG_LEVEL}  2>/proc/1/fd/2 1>/proc/1/fd/1
+	;;
+esac
